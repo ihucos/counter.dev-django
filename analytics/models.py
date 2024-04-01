@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 
 
 class Domain(models.Model):
-    user = models.ForeignKey(get_user_model())
+    user = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
     name = models.CharField(max_length=128)
     # publish_key = models.CharField(max_length=64)
 
@@ -22,7 +22,7 @@ class Report(models.Model):
     domain = models.ForeignKey(Domain, on_delete=models.CASCADE)
 
     start_date = models.DateField()
-    scope = models.CharField(max_length=16, choices=Scope)
+    scope = models.CharField(max_length=16, choices=Scope.choices)
 
     # date?
 
