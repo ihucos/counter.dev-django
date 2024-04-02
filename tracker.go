@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
-	"time"
-	"strconv"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
+	"database/sql"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/xavivars/uasurfer"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -60,7 +62,6 @@ func TimeNow(utcOffset int) time.Time {
 
 }
 
-
 func ParseUTCOffset(r *http.Request, key string) int {
 
 	min := func(x, y int) int {
@@ -85,13 +86,45 @@ func ParseUTCOffset(r *http.Request, key string) int {
 }
 
 func main() {
+
+	db, err := sql.Open("sqlite3", "/dev/shm/db?cache=shared")
+	if err != nil {
+		panic(fmt.Sprintf("sqlite.Open: %s", err))
+	}
+  db.SetMaxOpenConns(1) // avoid database is locked errors
+
+
+	statement, err := db.Prepare(`
+    create table if not exists HotReport (
+      user_identify TEXT,
+      domain TEXT,
+      date TEXT,
+      dimension TEXT,
+      member TEXT,
+      count integer,
+      UNIQUE(user_identify, domain, date, dimension, member)
+    );`)
+	if err != nil {
+		panic(err.Error())
+	}
+	statement.Exec()
+
+  incrStmt, err := db.Prepare(`
+    INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
+    VALUES (?, ?, ?, ?, ?, 1)
+    ON CONFLICT (user_identify, domain, date, dimension, member)
+    DO UPDATE SET count = count + 1;`)
+	if err != nil {
+		panic(err.Error())
+	}
+
 	http.HandleFunc("/track", func(w http.ResponseWriter, r *http.Request) {
 		visit := make(map[string]string)
 
 		//
 		// Input validation
 		//
-    var user string
+		var user string
 		uuid := r.FormValue("id")
 		if uuid == "" {
 			userId := r.FormValue("user")
@@ -101,15 +134,14 @@ func main() {
 				userId = r.FormValue("site")
 				if userId == "" {
 					w.WriteHeader(http.StatusBadRequest)
-					w.Write([]byte("missing site param"))
+					w.Write([]byte("missing site param\n"))
 					return
 				}
 			}
-      user = userId
+			user = userId
 		} else {
-      user = uuid
+			user = uuid
 		}
-		fmt.Println(user)
 
 		//
 		// variables
@@ -118,15 +150,17 @@ func main() {
 		userAgent := r.Header.Get("User-Agent")
 		ua := uasurfer.Parse(userAgent)
 		origin := r.Header.Get("Origin")
-		if origin == "" || origin == "null" {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Origin header can not be empty, not set or \"null\""))
-		}
+
+		// XXXXXXXXXXXX UNCOMMENT!!!
+		// if origin == "" || origin == "null" {
+		// 	w.WriteHeader(http.StatusBadRequest)
+		// 	w.Write([]byte("Origin header can not be empty, not set or \"null\"\n"))
+		// }
 
 		// ignore some origins
 		if strings.HasSuffix(origin, ".translate.goog") {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Ignoring due origin"))
+			w.Write([]byte("Ignoring due origin\n"))
 		}
 
 		//
@@ -218,16 +252,16 @@ func main() {
 		//
 		// save visit map
 		//
-		logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
+		// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
 
 		siteId := Origin2SiteId(origin)
 
-		fmt.Println(logLine)
-		fmt.Println(visit)
-		fmt.Println(now)
-		fmt.Println(siteId)
-		fmt.Println(user)
-		fmt.Println()
+		for dimension, member := range visit {
+      _, err = incrStmt.Exec(user, siteId, now.Format("2006-01-02"), dimension, member)
+			if err != nil {
+				panic(err.Error())
+			}
+		}
 
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Cache-Control", "public, immutable")
@@ -236,8 +270,8 @@ func main() {
 
 	})
 
-  fmt.Println("Serving...")
-	err := http.ListenAndServe(":3333", nil)
+	fmt.Println("Serving...")
+	err = http.ListenAndServe(":3333", nil)
 	if err != nil {
 		panic(fmt.Sprintf("ListenAndServe: %s", err))
 	}
