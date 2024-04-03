@@ -87,12 +87,11 @@ func ParseUTCOffset(r *http.Request, key string) int {
 
 func main() {
 
-	db, err := sql.Open("sqlite3", "/dev/shm/db?cache=shared")
+	db, err := sql.Open("sqlite3", "/tmp/dbadsf?cache=shared&mode=rwc&_journal_mode=WAL")
 	if err != nil {
 		panic(fmt.Sprintf("sqlite.Open: %s", err))
 	}
-  db.SetMaxOpenConns(1) // avoid database is locked errors
-
+	db.SetMaxOpenConns(1) // avoid database is locked errors
 
 	statement, err := db.Prepare(`
     create table if not exists HotReport (
@@ -108,15 +107,6 @@ func main() {
 		panic(err.Error())
 	}
 	statement.Exec()
-
-  incrStmt, err := db.Prepare(`
-    INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
-    VALUES (?, ?, ?, ?, ?, 1)
-    ON CONFLICT (user_identify, domain, date, dimension, member)
-    DO UPDATE SET count = count + 1;`)
-	if err != nil {
-		panic(err.Error())
-	}
 
 	http.HandleFunc("/track", func(w http.ResponseWriter, r *http.Request) {
 		visit := make(map[string]string)
@@ -256,12 +246,23 @@ func main() {
 
 		siteId := Origin2SiteId(origin)
 
+		tx, _ := db.Begin()
+		incrStmt, err := tx.Prepare(`
+    INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
+    VALUES (?, ?, ?, ?, ?, 1)
+    ON CONFLICT (user_identify, domain, date, dimension, member)
+    DO UPDATE SET count = count + 1;`)
+		if err != nil {
+			panic(err.Error())
+		}
+
 		for dimension, member := range visit {
-      _, err = incrStmt.Exec(user, siteId, now.Format("2006-01-02"), dimension, member)
+			_, err = incrStmt.Exec(user, siteId, now.Format("2006-01-02"), dimension, member)
 			if err != nil {
 				panic(err.Error())
 			}
 		}
+		tx.Commit()
 
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Cache-Control", "public, immutable")
