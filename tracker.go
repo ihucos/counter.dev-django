@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"database/sql"
-	_ "github.com/mattn/go-sqlite3"
+	// _ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 	"github.com/xavivars/uasurfer"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -85,9 +86,66 @@ func ParseUTCOffset(r *http.Request, key string) int {
 	return max(min(utcOffset, 14), -12)
 }
 
+type Visit struct {
+	user   string
+	domain string
+	date   string
+	visit  map[string]string
+}
+
+func (visit *Visit) save(stmt *sql.Stmt) {
+
+	for dimension, member := range visit.visit {
+		_, err := stmt.Exec(visit.user, visit.domain, visit.date, dimension, member)
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+
+}
+
+func prep(tx *sql.Tx) *sql.Stmt {
+
+	incrStmt, err := tx.Prepare(`
+      INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
+      VALUES ($1, $2, $3, $4, $5, 1)
+      ON CONFLICT (user_identify, domain, date, dimension, member)
+      DO UPDATE SET count = HotReport.count + 1;`)
+	if err != nil {
+		panic(err.Error())
+	}
+	return incrStmt
+
+}
+
+func saver(db *sql.DB, channel chan Visit) {
+
+	counter := 0
+	tx, _ := db.Begin()
+  stmt := prep(tx)
+	for vis := range channel {
+
+		if counter%100 == 0 && counter != 0{
+			tx.Commit()
+			tx, _ = db.Begin()
+      stmt = prep(tx)
+      fmt.Println(counter)
+
+		}
+
+    _ = vis
+    _ = stmt
+		vis.save(stmt)
+
+    counter += 1
+
+	}
+}
+
 func main() {
 
-	db, err := sql.Open("sqlite3", "/tmp/dbadsf?cache=shared&mode=rwc&_journal_mode=WAL")
+	// db, err := sql.Open("sqlite3", "/tmp/dbadsf?cache=shared&mode=rwc&_journal_mode=WAL")
+	db, err := sql.Open("postgres", "postgresql://postgres:postgres@localhost/test?sslmode=disable")
 	if err != nil {
 		panic(fmt.Sprintf("sqlite.Open: %s", err))
 	}
@@ -107,6 +165,10 @@ func main() {
 		panic(err.Error())
 	}
 	statement.Exec()
+
+	channel := make(chan Visit)
+
+	go saver(db, channel)
 
 	http.HandleFunc("/track", func(w http.ResponseWriter, r *http.Request) {
 		visit := make(map[string]string)
@@ -244,25 +306,9 @@ func main() {
 		//
 		// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
 
-		siteId := Origin2SiteId(origin)
+		domain := Origin2SiteId(origin)
 
-		tx, _ := db.Begin()
-		incrStmt, err := tx.Prepare(`
-    INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
-    VALUES (?, ?, ?, ?, ?, 1)
-    ON CONFLICT (user_identify, domain, date, dimension, member)
-    DO UPDATE SET count = count + 1;`)
-		if err != nil {
-			panic(err.Error())
-		}
-
-		for dimension, member := range visit {
-			_, err = incrStmt.Exec(user, siteId, now.Format("2006-01-02"), dimension, member)
-			if err != nil {
-				panic(err.Error())
-			}
-		}
-		tx.Commit()
+		channel <- Visit{user, domain, now.Format("2006-01-02"), visit}
 
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Cache-Control", "public, immutable")
