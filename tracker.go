@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"database/sql"
-	// _ "github.com/mattn/go-sqlite3"
-	_ "github.com/lib/pq"
+	 pq "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/xavivars/uasurfer"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -93,24 +93,15 @@ type Visit struct {
 	visit  map[string]string
 }
 
-func (visit *Visit) save(stmt *sql.Stmt) {
+func prep(tx *sql.DB) *sql.Stmt {
 
-	for dimension, member := range visit.visit {
-		_, err := stmt.Exec(visit.user, visit.domain, visit.date, dimension, member)
-		if err != nil {
-			panic(err.Error())
-		}
-	}
-
-}
-
-func prep(tx *sql.Tx) *sql.Stmt {
-
+	// incrStmt, err := tx.Prepare(`select 1`)
 	incrStmt, err := tx.Prepare(`
       INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
-      VALUES ($1, $2, $3, $4, $5, 1)
+      SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::int[])
       ON CONFLICT (user_identify, domain, date, dimension, member)
       DO UPDATE SET count = HotReport.count + 1;`)
+      // DO NOTHING;`)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -121,24 +112,40 @@ func prep(tx *sql.Tx) *sql.Stmt {
 func saver(db *sql.DB, channel chan Visit) {
 
 	counter := 0
-	tx, _ := db.Begin()
-  stmt := prep(tx)
-	for vis := range channel {
+	stmt := prep(db)
+	data := make([][]string, 6)
+  for visit := range channel {
 
-		if counter%100 == 0 && counter != 0{
-			tx.Commit()
-			tx, _ = db.Begin()
-      stmt = prep(tx)
-      fmt.Println(counter)
+		if counter%50 == 0 && counter != 0 {
+			// tx.Commit()
+			// tx, _ = db.Begin()
+			//    stmt = prep(tx)
+			// fmt.Println(counter)
+			_, err := stmt.Exec(
+				pq.Array(data[0]),
+				pq.Array(data[1]),
+				pq.Array(data[2]),
+				pq.Array(data[3]),
+				pq.Array(data[4]),
+				pq.Array(data[5]),
+			)
+			if err != nil {
+				panic(err.Error())
+			}
+      // fmt.Println(data)
+      data = make([][]string, 6)
 
 		}
+		for dimension, member := range visit.visit {
+			data[0] = append(data[0], visit.user)
+			data[1] = append(data[1], visit.domain)
+			data[2] = append(data[2], visit.date)
+			data[3] = append(data[3], fmt.Sprintf("%sX%s", counter, dimension))
+			data[4] = append(data[4], member)
+			data[5] = append(data[5], "1")
+		}
 
-    _ = vis
-    _ = stmt
-		vis.save(stmt)
-
-    counter += 1
-
+    counter++
 	}
 }
 
