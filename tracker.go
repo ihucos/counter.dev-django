@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"database/sql"
-	 pq "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
+	"bytes"
+	"encoding/json"
+
 	"github.com/xavivars/uasurfer"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -40,6 +40,48 @@ var ScreenResolutions = map[string]bool{
 	"414x736":   true,
 	"414x896":   true,
 	"768x1024":  true}
+
+var channel = make(chan Visit)
+
+var POST_URL = "http://example.com/"
+
+// func prep(tx *sql.DB) *sql.Stmt {
+//
+// 	// incrStmt, err := tx.Prepare(`select 1`)
+// 	incrStmt, err := tx.Prepare(`
+//       INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
+//       SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::int[])
+//       ON CONFLICT (user_identify, domain, date, dimension, member)
+//       DO UPDATE SET count = HotReport.count + 1;`)
+// 	// DO NOTHING;`)
+// 	if err != nil {
+// 		panic(err.Error())
+// 	}
+// 	return incrStmt
+//
+// }
+
+// // db, err := sql.Open("sqlite3", "/tmp/dbadsf?cache=shared&mode=rwc&_journal_mode=WAL")
+// db, err := sql.Open("postgres", "postgresql://postgres:postgres@localhost/test?sslmode=disable")
+// if err != nil {
+// 	panic(fmt.Sprintf("sqlite.Open: %s", err))
+// }
+//
+// statement, err := db.Prepare(`
+//    create table if not exists HotReport (
+//      user_identify TEXT,
+//      domain TEXT,
+//      date TEXT,
+//      dimension TEXT,
+//      member TEXT,
+//      count integer,
+//      UNIQUE(user_identify, domain, date, dimension, member)
+//    );`)
+// if err != nil {
+// 	panic(err.Error())
+// }
+// statement.Exec()
+//
 
 func Origin2SiteId(origin string) string {
 	// this function returns
@@ -93,239 +135,233 @@ type Visit struct {
 	visit  map[string]string
 }
 
-func prep(tx *sql.DB) *sql.Stmt {
+type Batch map[[5]string]int
 
-	// incrStmt, err := tx.Prepare(`select 1`)
-	incrStmt, err := tx.Prepare(`
-      INSERT INTO HotReport (user_identify, domain, date, dimension, member, count)
-      SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::int[])
-      ON CONFLICT (user_identify, domain, date, dimension, member)
-      DO UPDATE SET count = HotReport.count + 1;`)
-      // DO NOTHING;`)
-	if err != nil {
-		panic(err.Error())
+type PostData struct {
+	User      []string `json:"user"`
+	Domain    []string `json:"domain"`
+	Date      []string `json:"date"`
+	Dimension []string `json:"dimension"`
+	Member    []string `json:"member"`
+	Count     []string `json:"count"`
+}
+
+func batcher() {
+
+	counter := 0
+
+	batch := make(Batch)
+
+	for visit := range channel {
+
+		for dimension, member := range visit.visit {
+
+      // aggregate what we can aggregate 
+			key := [5]string{visit.user, visit.domain, visit.date, dimension, member}
+			currentCount, ok := batch[key]
+			if !ok {
+				currentCount = 1
+			}
+			batch[key] = currentCount + 1
+		}
+
+		if counter%50 == 0 && counter != 0 {
+			go saveBatch(batch)
+			batch = make(Batch)
+
+		}
+
+		counter++
 	}
-	return incrStmt
+}
+
+func saveBatch(batch Batch) {
+	postData := PostData{}
+	for key, count := range batch {
+		postData.User = append(postData.User, key[0])
+		postData.Domain = append(postData.Domain, key[1])
+		postData.Date = append(postData.Date, key[2])
+		postData.Dimension = append(postData.Dimension, key[4])
+		postData.Member = append(postData.Member, key[4])
+		postData.Count = append(postData.Count, fmt.Sprintf("%d", count))
+	}
+	body, err := json.Marshal(postData)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(body))
+
+	r, err := http.NewRequest("POST", POST_URL, bytes.NewBuffer(body))
+	if err != nil {
+		panic(err)
+	}
+  r.Header.Add("Content-Type", "application/json")
+  client := &http.Client{}
+  res, err := client.Do(r)
+  if err != nil {
+    panic(err)
+  }
+  res.Body.Close()
 
 }
 
-func saver(db *sql.DB, channel chan Visit) {
+func handleTrack(w http.ResponseWriter, r *http.Request) {
+	visit := make(map[string]string)
 
-	counter := 0
-	stmt := prep(db)
-	data := make([][]string, 6)
-  for visit := range channel {
-
-		if counter%50 == 0 && counter != 0 {
-			// tx.Commit()
-			// tx, _ = db.Begin()
-			//    stmt = prep(tx)
-			// fmt.Println(counter)
-			_, err := stmt.Exec(
-				pq.Array(data[0]),
-				pq.Array(data[1]),
-				pq.Array(data[2]),
-				pq.Array(data[3]),
-				pq.Array(data[4]),
-				pq.Array(data[5]),
-			)
-			if err != nil {
-				panic(err.Error())
+	//
+	// Input validation
+	//
+	var user string
+	uuid := r.FormValue("id")
+	if uuid == "" {
+		userId := r.FormValue("user")
+		if userId == "" {
+			// this has to be supported until the end of time, or
+			// alternatively all current users are not using that option.
+			userId = r.FormValue("site")
+			if userId == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte("missing site param\n"))
+				return
 			}
-      // fmt.Println(data)
-      data = make([][]string, 6)
-
 		}
-		for dimension, member := range visit.visit {
-			data[0] = append(data[0], visit.user)
-			data[1] = append(data[1], visit.domain)
-			data[2] = append(data[2], visit.date)
-			data[3] = append(data[3], fmt.Sprintf("%sX%s", counter, dimension))
-			data[4] = append(data[4], member)
-			data[5] = append(data[5], "1")
-		}
-
-    counter++
+		user = userId
+	} else {
+		user = uuid
 	}
+
+	//
+	// variables
+	//
+	now := TimeNow(ParseUTCOffset(r, "utcoffset"))
+	userAgent := r.Header.Get("User-Agent")
+	ua := uasurfer.Parse(userAgent)
+	origin := r.Header.Get("Origin")
+
+	// XXXXXXXXXXXX UNCOMMENT!!!
+	// if origin == "" || origin == "null" {
+	// 	w.WriteHeader(http.StatusBadRequest)
+	// 	w.Write([]byte("Origin header can not be empty, not set or \"null\"\n"))
+	// }
+
+	// ignore some origins
+	if strings.HasSuffix(origin, ".translate.goog") {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Ignoring due origin\n"))
+	}
+
+	//
+	// set expire
+	//
+	w.Header().Set("Expires", now.Format("Mon, 2 Jan 2006")+" 23:59:59 GMT")
+
+	//
+	// Not strictly necessary but avoids the browser issuing an error.
+	//
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	//
+	// drop if bot or origin is from localhost
+	// see issue: https://github.com/avct/uasurfer/issues/65
+	//
+	if ua.IsBot() || strings.Contains(userAgent, " HeadlessChrome/") || strings.Contains(userAgent, "PetalBot;") || strings.Contains(userAgent, "AdsBot") {
+		return
+	}
+	originUrl, err := url.Parse(origin)
+	if err == nil && (originUrl.Hostname() == "localhost" || originUrl.Hostname() == "127.0.0.1") {
+		return
+	}
+
+	//
+	// build visit map
+	//
+
+	refParam := r.FormValue("referrer")
+	parsedUrl, err := url.Parse(refParam)
+	if err == nil && parsedUrl.Host != "" {
+		visit["ref"] = parsedUrl.Host
+	}
+
+	ref := r.Header.Get("Referer")
+
+	parsedUrl, err = url.Parse(ref)
+	if err == nil && parsedUrl.Path != "" {
+		visit["loc"] = parsedUrl.Path
+	}
+
+	tags, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
+	if err == nil && len(tags) > 0 {
+		lang := display.English.Languages().Name(tags[0])
+		visit["lang"] = lang
+	}
+
+	country := r.FormValue("country")
+	if country == "" {
+		country = r.Header.Get("CF-IPCountry")
+	}
+
+	if country != "" && country != "XX" {
+		visit["country"] = strings.ToLower(country)
+	}
+
+	screenInput := r.FormValue("screen")
+	if screenInput != "" {
+		_, screenExists := ScreenResolutions[screenInput]
+		if screenExists {
+			visit["screen"] = screenInput
+		} else {
+			visit["screen"] = "Other"
+		}
+	}
+
+	device := ua.DeviceType.StringTrimPrefix()
+
+	visit["date"] = now.Format("2006-01-02")
+
+	visit["weekday"] = fmt.Sprintf("%d", now.Weekday())
+
+	visit["hour"] = fmt.Sprintf("%d", now.Hour())
+
+	visit["browser"] = ua.Browser.Name.StringTrimPrefix()
+
+	visit["device"] = device
+
+	var platform string
+	// Show "Android" on android devices instead of "Linux".
+	if ua.OS.Name == uasurfer.OSAndroid {
+		platform = "Android"
+	} else {
+		platform = ua.OS.Platform.StringTrimPrefix()
+
+	}
+	visit["platform"] = platform
+
+	//
+	// save visit map
+	//
+	// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
+
+	domain := Origin2SiteId(origin)
+
+	channel <- Visit{user, domain, now.Format("2006-01-02"), visit}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Cache-Control", "public, immutable")
+	w.WriteHeader(http.StatusNoContent)
+	w.Write([]byte(""))
+
 }
 
 func main() {
 
-	// db, err := sql.Open("sqlite3", "/tmp/dbadsf?cache=shared&mode=rwc&_journal_mode=WAL")
-	db, err := sql.Open("postgres", "postgresql://postgres:postgres@localhost/test?sslmode=disable")
-	if err != nil {
-		panic(fmt.Sprintf("sqlite.Open: %s", err))
-	}
-	db.SetMaxOpenConns(1) // avoid database is locked errors
+	_ = channel
 
-	statement, err := db.Prepare(`
-    create table if not exists HotReport (
-      user_identify TEXT,
-      domain TEXT,
-      date TEXT,
-      dimension TEXT,
-      member TEXT,
-      count integer,
-      UNIQUE(user_identify, domain, date, dimension, member)
-    );`)
-	if err != nil {
-		panic(err.Error())
-	}
-	statement.Exec()
+	go batcher()
 
-	channel := make(chan Visit)
-
-	go saver(db, channel)
-
-	http.HandleFunc("/track", func(w http.ResponseWriter, r *http.Request) {
-		visit := make(map[string]string)
-
-		//
-		// Input validation
-		//
-		var user string
-		uuid := r.FormValue("id")
-		if uuid == "" {
-			userId := r.FormValue("user")
-			if userId == "" {
-				// this has to be supported until the end of time, or
-				// alternatively all current users are not using that option.
-				userId = r.FormValue("site")
-				if userId == "" {
-					w.WriteHeader(http.StatusBadRequest)
-					w.Write([]byte("missing site param\n"))
-					return
-				}
-			}
-			user = userId
-		} else {
-			user = uuid
-		}
-
-		//
-		// variables
-		//
-		now := TimeNow(ParseUTCOffset(r, "utcoffset"))
-		userAgent := r.Header.Get("User-Agent")
-		ua := uasurfer.Parse(userAgent)
-		origin := r.Header.Get("Origin")
-
-		// XXXXXXXXXXXX UNCOMMENT!!!
-		// if origin == "" || origin == "null" {
-		// 	w.WriteHeader(http.StatusBadRequest)
-		// 	w.Write([]byte("Origin header can not be empty, not set or \"null\"\n"))
-		// }
-
-		// ignore some origins
-		if strings.HasSuffix(origin, ".translate.goog") {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Ignoring due origin\n"))
-		}
-
-		//
-		// set expire
-		//
-		w.Header().Set("Expires", now.Format("Mon, 2 Jan 2006")+" 23:59:59 GMT")
-
-		//
-		// Not strictly necessary but avoids the browser issuing an error.
-		//
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		//
-		// drop if bot or origin is from localhost
-		// see issue: https://github.com/avct/uasurfer/issues/65
-		//
-		if ua.IsBot() || strings.Contains(userAgent, " HeadlessChrome/") || strings.Contains(userAgent, "PetalBot;") || strings.Contains(userAgent, "AdsBot") {
-			return
-		}
-		originUrl, err := url.Parse(origin)
-		if err == nil && (originUrl.Hostname() == "localhost" || originUrl.Hostname() == "127.0.0.1") {
-			return
-		}
-
-		//
-		// build visit map
-		//
-
-		refParam := r.FormValue("referrer")
-		parsedUrl, err := url.Parse(refParam)
-		if err == nil && parsedUrl.Host != "" {
-			visit["ref"] = parsedUrl.Host
-		}
-
-		ref := r.Header.Get("Referer")
-
-		parsedUrl, err = url.Parse(ref)
-		if err == nil && parsedUrl.Path != "" {
-			visit["loc"] = parsedUrl.Path
-		}
-
-		tags, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
-		if err == nil && len(tags) > 0 {
-			lang := display.English.Languages().Name(tags[0])
-			visit["lang"] = lang
-		}
-
-		country := r.FormValue("country")
-		if country == "" {
-			country = r.Header.Get("CF-IPCountry")
-		}
-
-		if country != "" && country != "XX" {
-			visit["country"] = strings.ToLower(country)
-		}
-
-		screenInput := r.FormValue("screen")
-		if screenInput != "" {
-			_, screenExists := ScreenResolutions[screenInput]
-			if screenExists {
-				visit["screen"] = screenInput
-			} else {
-				visit["screen"] = "Other"
-			}
-		}
-
-		device := ua.DeviceType.StringTrimPrefix()
-
-		visit["date"] = now.Format("2006-01-02")
-
-		visit["weekday"] = fmt.Sprintf("%d", now.Weekday())
-
-		visit["hour"] = fmt.Sprintf("%d", now.Hour())
-
-		visit["browser"] = ua.Browser.Name.StringTrimPrefix()
-
-		visit["device"] = device
-
-		var platform string
-		// Show "Android" on android devices instead of "Linux".
-		if ua.OS.Name == uasurfer.OSAndroid {
-			platform = "Android"
-		} else {
-			platform = ua.OS.Platform.StringTrimPrefix()
-
-		}
-		visit["platform"] = platform
-
-		//
-		// save visit map
-		//
-		// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
-
-		domain := Origin2SiteId(origin)
-
-		channel <- Visit{user, domain, now.Format("2006-01-02"), visit}
-
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Cache-Control", "public, immutable")
-		w.WriteHeader(http.StatusNoContent)
-		w.Write([]byte(""))
-
-	})
+	http.HandleFunc("/track", handleTrack)
 
 	fmt.Println("Serving...")
-	err = http.ListenAndServe(":3333", nil)
+	err := http.ListenAndServe(":3333", nil)
 	if err != nil {
 		panic(fmt.Sprintf("ListenAndServe: %s", err))
 	}
