@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+  uuidX "github.com/google/uuid"
+
 	"strconv"
 	"strings"
 	"time"
@@ -132,7 +134,7 @@ type Visit struct {
 	user   string
 	domain string
 	date   string
-	visit  map[string]string
+	data  map[string]string
 }
 
 type Batch map[[5]string]int
@@ -143,7 +145,7 @@ type PostData struct {
 	Date      []string `json:"date"`
 	Dimension []string `json:"dimension"`
 	Member    []string `json:"member"`
-	Count     []string `json:"count"`
+	Count     []int `json:"count"`
 }
 
 func batcher() {
@@ -154,13 +156,13 @@ func batcher() {
 
 	for visit := range channel {
 
-		for dimension, member := range visit.visit {
+		for dimension, member := range visit.data {
 
       // aggregate what we can aggregate 
 			key := [5]string{visit.user, visit.domain, visit.date, dimension, member}
 			currentCount, ok := batch[key]
 			if !ok {
-				currentCount = 1
+				currentCount = 0
 			}
 			batch[key] = currentCount + 1
 		}
@@ -183,7 +185,7 @@ func saveBatch(batch Batch) {
 		postData.Date = append(postData.Date, key[2])
 		postData.Dimension = append(postData.Dimension, key[4])
 		postData.Member = append(postData.Member, key[4])
-		postData.Count = append(postData.Count, fmt.Sprintf("%d", count))
+		postData.Count = append(postData.Count, count)
 	}
 	body, err := json.Marshal(postData)
 	if err != nil {
@@ -206,7 +208,7 @@ func saveBatch(batch Batch) {
 }
 
 func handleTrack(w http.ResponseWriter, r *http.Request) {
-	visit := make(map[string]string)
+	visitData := make(map[string]string)
 
 	//
 	// Input validation
@@ -279,20 +281,20 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 	refParam := r.FormValue("referrer")
 	parsedUrl, err := url.Parse(refParam)
 	if err == nil && parsedUrl.Host != "" {
-		visit["ref"] = parsedUrl.Host
+		visitData["ref"] = parsedUrl.Host
 	}
 
 	ref := r.Header.Get("Referer")
 
 	parsedUrl, err = url.Parse(ref)
 	if err == nil && parsedUrl.Path != "" {
-		visit["loc"] = parsedUrl.Path
+		visitData["loc"] = parsedUrl.Path
 	}
 
 	tags, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
 	if err == nil && len(tags) > 0 {
 		lang := display.English.Languages().Name(tags[0])
-		visit["lang"] = lang
+		visitData["lang"] = lang
 	}
 
 	country := r.FormValue("country")
@@ -301,30 +303,30 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if country != "" && country != "XX" {
-		visit["country"] = strings.ToLower(country)
+		visitData["country"] = strings.ToLower(country)
 	}
 
 	screenInput := r.FormValue("screen")
 	if screenInput != "" {
 		_, screenExists := ScreenResolutions[screenInput]
 		if screenExists {
-			visit["screen"] = screenInput
+			visitData["screen"] = screenInput
 		} else {
-			visit["screen"] = "Other"
+			visitData["screen"] = "Other"
 		}
 	}
 
 	device := ua.DeviceType.StringTrimPrefix()
 
-	visit["date"] = now.Format("2006-01-02")
+	visitData["date"] = now.Format("2006-01-02")
 
-	visit["weekday"] = fmt.Sprintf("%d", now.Weekday())
+	visitData["weekday"] = fmt.Sprintf("%d", now.Weekday())
 
-	visit["hour"] = fmt.Sprintf("%d", now.Hour())
+	visitData["hour"] = fmt.Sprintf("%d", now.Hour())
 
-	visit["browser"] = ua.Browser.Name.StringTrimPrefix()
+	visitData["browser"] = ua.Browser.Name.StringTrimPrefix()
 
-	visit["device"] = device
+	visitData["device"] = device
 
 	var platform string
 	// Show "Android" on android devices instead of "Linux".
@@ -334,16 +336,18 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 		platform = ua.OS.Platform.StringTrimPrefix()
 
 	}
-	visit["platform"] = platform
+	visitData["platform"] = platform
 
 	//
 	// save visit map
 	//
 	// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
 
-	domain := Origin2SiteId(origin)
+	// domain := Origin2SiteId(origin)
+  // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
+  domain := uuidX.New().String()
 
-	channel <- Visit{user, domain, now.Format("2006-01-02"), visit}
+	channel <- Visit{user, domain, now.Format("2006-01-02"), visitData}
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Cache-Control", "public, immutable")
