@@ -36,7 +36,8 @@ def save_count_batch(request):
 
         domain_count.append(
             dict(
-                domain_id=lambda: indexed_domains[(item["user"], item["domain"])],
+                # domain_id=lambda item=item: indexed_domains[(item["user"], item["domain"])],
+                domain_id=(item["user"], item["domain"]),
                 date=item["date"],
                 dimension=item["dimension"],
                 member=item["member"],
@@ -44,12 +45,17 @@ def save_count_batch(request):
             )
         )
 
-        domain_key = (item["user"]), item["domain"]
-        if not domain_key in indexed_domains:
-            indexed_domains[domain_key] = {
-                "user_id": lambda: user_by_user_key[item["user"]],
-                "name": item["domain"],
-            }
+        # domain_key = (item["user"]), item["domain"]
+        # if not domain_key in indexed_domains:
+        #     indexed_domains[domain_key] = {
+        #         "user_id": lambda item=item: user_by_user_key[item["user"]],
+        #         "name": item["domain"],
+        #     }
+        try:
+            user_id = user_by_user_key[item["user"]]
+        except KeyError:
+            continue
+
 
         try:
             uuid_obj = UUID(item["user"])
@@ -78,12 +84,18 @@ def save_count_batch(request):
     user_by_user_key = {**user_by_username, **user_by_uuid}
 
     indexed_domains = {
-        (d.user, d.name): d
+        (d.user.id, d.name): d
         for d in models.Domain.objects.bulk_create(
-            models.Domain(**i) for i in expand_callables(indexed_domains.values())
+            (models.Domain(**i) for i in expand_callables(indexed_domains.values())),
+            ignore_conflicts=True
         )
     }
 
+    assert 0, (
+        indexed_domains,
+
+        domain_count,
+               )
     models.DomainCount.objects.bulk_create(
         models.DomainCount(**i) for i in expand_callables(domain_count)
     )

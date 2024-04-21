@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-  uuidX "github.com/google/uuid"
+  // uuidX "github.com/google/uuid"
 
 	"strconv"
 	"strings"
@@ -344,8 +344,9 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 	// logLine := fmt.Sprintf("[%s] %s %s %s %s", now.Format("2006-01-02 15:04:05"), country, refParam, device, platform)
 
 	// domain := Origin2SiteId(origin)
+	domain := "example.com"
   // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
-  domain := uuidX.New().String()
+  // domain := uuidX.New().String()
 
 	channel <- Visit{user, domain, now.Format("2006-01-02"), visitData}
 
