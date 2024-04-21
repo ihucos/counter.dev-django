@@ -10,31 +10,53 @@ from . import models
 ITEM_KEYS = ["user", "domain", "date", "dimension", "member", "count"]
 
 
+def expand_callables(dic):
+    for key in dic.keys():
+        if callable(dic[key]):
+            dic[key] = dic[key]()
+    return dic
+
+
 @api_view(["POST"])
 def save_count_batch(request):
 
-    #
-    # Find out which user keys are uuids and which are usernames
-    #
+    indexed_domains = {}
+    domain_count = []
     used_uuids = set()
     used_usernames = set()
-    for user_key in request.data["user"]:
+
+    for item_values in zip(*(request.data[key] for key in ITEM_KEYS)):
+        item = {key: item_values[ITEM_KEYS.index(key)] for key in ITEM_KEYS}
+
+        domain_count.append(
+            dict(
+                domain=lambda: indexed_domains[(item["user"], item["domain"])],
+                date=item["date"],
+                dimension=item["dimension"],
+                member=item["member"],
+                count=item["count"],
+            )
+        )
+
+        domain_key = (item["user"]), item["domain"]
+        if not domain_key in indexed_domains:
+            indexed_domains[domain_key] = {
+                "user": lambda: user_by_user_key[item["user"]],
+                "name": item["domain"],
+            }
 
         try:
-            uuid_obj = UUID(user_key)
+            uuid_obj = UUID(item["user"])
         except ValueError:
             is_uuid = False
         else:
-            is_uuid = str(uuid_obj) == user_key
+            is_uuid = str(uuid_obj) == item["user"]
 
         if is_uuid:
-            used_uuids.add(user_key)
+            used_uuids.add(item["user"])
         else:
-            used_usernames.add(user_key)
+            used_usernames.add(item["user"])
 
-    #
-    # Resolve user names and uuids to an user id
-    #
     user_by_username = {
         username: user_id
         for username, user_id in get_user_model()
@@ -49,50 +71,97 @@ def save_count_batch(request):
     }
     user_by_user_key = {**user_by_username, **user_by_uuid}
 
-    #
-    # Create domains
-    #
-    domains = set()
-    for (user_key, name) in set(zip(request.data["user"], request.data["domain"])):
-
-        try:
-            user_id = user_by_user_key[user_key]
-        except KeyError:
-            continue
-        domains.add((user_id, name))
-    assert 0, domains
     indexed_domains = {
-        (d.user, d.name): d for d in models.Domain.objects.bulk_create(domain_objs)
+        (d.user, d.name): d
+        for d in models.Domain.objects.bulk_create(
+            models.Domain(**(expand_callables(i))) for i in indexed_domains.values()
+        )
     }
 
-    #
-    # Create domain counts
-    #
-    domain_count_objs = []
-    for item_values in zip(*(request.data[key] for key in ITEM_KEYS)):
-        item = {key: item_values[ITEM_KEYS.index(key)] for key in ITEM_KEYS}
+    models.DomainCount.objects.bulk_create(
+        models.DomainCount(**(expand_callables(i))) for i in domain_count
+    )
 
-        try:
-            domain_obj = indexed_domains[(item["user"], item["domain"])]
-        except KeyError:
-            # No such user
-            continue
-
-        domain_count_objs.append(
-            domain=domain_obj,
-            date=item["date"],
-            dimension=item["dimension"],
-            member=item["member"],
-            count=item["count"],
-        )
-
-    models.DomainCount.objects.bulk_create(domain_count_objs)
+    # #
+    # # Find out which user keys are uuids and which are usernames
+    # #
+    # used_uuids = set()
+    # used_usernames = set()
+    # for user_key in request.data["user"]:
     #
-    # Commpress domain counts
+    #     try:
+    #         uuid_obj = UUID(user_key)
+    #     except ValueError:
+    #         is_uuid = False
+    #     else:
+    #         is_uuid = str(uuid_obj) == user_key
     #
-
+    #     if is_uuid:
+    #         used_uuids.add(user_key)
+    #     else:
+    #         used_usernames.add(user_key)
     #
-    # Return nothing
+    # #
+    # # Resolve user names and uuids to an user id
+    # #
+    # user_by_username = {
+    #     username: user_id
+    #     for username, user_id in get_user_model()
+    #     .objects.filter(username__in=used_usernames)
+    #     .values_list("username", "id")
+    # }
+    # user_by_uuid = {
+    #     uuid: user_id
+    #     for uuid, user_id in models.UserData.objects.filter(
+    #         uuid__in=used_uuids,
+    #     ).values_list("uuid", "user_id")
+    # }
+    # user_by_user_key = {**user_by_username, **user_by_uuid}
     #
+    # #
+    # # Create domains
+    # #
+    # domains = set()
+    # for (user_key, name) in set(zip(request.data["user"], request.data["domain"])):
+    #
+    #     try:
+    #         user_id = user_by_user_key[user_key]
+    #     except KeyError:
+    #         continue
+    #     domains.add((user_id, name))
+    # assert 0, domains
+    # indexed_domains = {
+    #     (d.user, d.name): d for d in models.Domain.objects.bulk_create(domain_objs)
+    # }
+    #
+    # #
+    # # Create domain counts
+    # #
+    # domain_count_objs = []
+    # for item_values in zip(*(request.data[key] for key in ITEM_KEYS)):
+    #     item = {key: item_values[ITEM_KEYS.index(key)] for key in ITEM_KEYS}
+    #
+    #     try:
+    #         domain_obj = indexed_domains[(item["user"], item["domain"])]
+    #     except KeyError:
+    #         # No such user
+    #         continue
+    #
+    #     domain_count_objs.append(
+    #         domain=domain_obj,
+    #         date=item["date"],
+    #         dimension=item["dimension"],
+    #         member=item["member"],
+    #         count=item["count"],
+    #     )
+    #
+    # models.DomainCount.objects.bulk_create(domain_count_objs)
+    # #
+    # # Commpress domain counts
+    # #
+    #
+    # #
+    # # Return nothing
+    # #
 
     return Response("", status=status.HTTP_204_NO_CONTENT)
