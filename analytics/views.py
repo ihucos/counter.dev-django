@@ -10,11 +10,17 @@ from . import models
 ITEM_KEYS = ["user", "domain", "date", "dimension", "member", "count"]
 
 
-def expand_callables(dic):
-    for key in dic.keys():
-        if callable(dic[key]):
-            dic[key] = dic[key]()
-    return dic
+def expand_callables(dic_lst):
+    new_lst = []
+    for dic in dic_lst:
+        for key in dic.keys():
+            if callable(dic[key]):
+                try:
+                    dic[key] = dic[key]()
+                except KeyError:
+                    continue
+                new_lst.append(dic)
+    return new_lst
 
 
 @api_view(["POST"])
@@ -30,7 +36,7 @@ def save_count_batch(request):
 
         domain_count.append(
             dict(
-                domain=lambda: indexed_domains[(item["user"], item["domain"])],
+                domain_id=lambda: indexed_domains[(item["user"], item["domain"])],
                 date=item["date"],
                 dimension=item["dimension"],
                 member=item["member"],
@@ -41,7 +47,7 @@ def save_count_batch(request):
         domain_key = (item["user"]), item["domain"]
         if not domain_key in indexed_domains:
             indexed_domains[domain_key] = {
-                "user": lambda: user_by_user_key[item["user"]],
+                "user_id": lambda: user_by_user_key[item["user"]],
                 "name": item["domain"],
             }
 
@@ -74,12 +80,12 @@ def save_count_batch(request):
     indexed_domains = {
         (d.user, d.name): d
         for d in models.Domain.objects.bulk_create(
-            models.Domain(**(expand_callables(i))) for i in indexed_domains.values()
+            models.Domain(**i) for i in expand_callables(indexed_domains.values())
         )
     }
 
     models.DomainCount.objects.bulk_create(
-        models.DomainCount(**(expand_callables(i))) for i in domain_count
+        models.DomainCount(**i) for i in expand_callables(domain_count)
     )
 
     # #
