@@ -8,6 +8,9 @@ class User(AbstractUser):
     uuid = models.UUIDField(null=True)
 
 class DomainCount(models.Model):
+
+    class Meta:
+        unique_together = ["user", "domain", "date", "dimension", "member"]
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     domain = models.CharField(max_length=16)
     date = models.DateField()

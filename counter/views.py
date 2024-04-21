@@ -2,6 +2,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
+from django.db import connection
+
 
 from uuid import UUID
 
@@ -27,31 +29,35 @@ def save_count_batch(request):
         .values_list("uuid", "id")
     }
 
-    domain_counts = []
-    for item_values in zip(*(request.data[key] for key in ITEM_KEYS)):
-        item = {key: item_values[ITEM_KEYS.index(key)] for key in ITEM_KEYS}
+    user_ids = []
+    for username, uuid in zip(request.data["user_id"], request.data["user_uuid"]):
 
-        user_username = item.pop("user_id")
-        user_uuid = item.pop("user_uuid")
         try:
-            if user_username:
-                user_id = user_by_username[user_username]
+            if username:
+                user_id = user_by_username[username]
             else:
-                user_id = user_by_uuid[user_uuid]
+                user_id = user_by_uuid[uuid]
         except KeyError:
             continue
 
-        domain_counts.append(
-            models.DomainCount(
-                user_id=user_id,
-                domain=item["domain"],
-                date=item["date"],
-                dimension=item["dimension"],
-                member=item["member"],
-                count=item["count"],
-            )
-        )
+        user_ids.append(user_id)
 
-    models.DomainCount.objects.bulk_create(domain_counts)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+        INSERT INTO counter_domaincount (user_id, domain, date, dimension, member, count)
+        SELECT * FROM UNNEST(%s::bigint[], %s::TEXT[], %s::date[], %s::TEXT[], %s::TEXT[], %s::int[])
+        ON CONFLICT (user_id, domain, date, dimension, member)
+        DO UPDATE SET count = counter_domaincount.count + EXCLUDED.count;
+        """,
+            [
+                user_ids,
+                request.data["domain"],
+                request.data["date"],
+                request.data["dimension"],
+                request.data["member"],
+                request.data["count"],
+            ],
+        )
 
     return Response(status=status.HTTP_204_NO_CONTENT)
