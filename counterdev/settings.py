@@ -81,7 +81,6 @@ WSGI_APPLICATION = 'counterdev.wsgi.application'
 DATABASES = {
     'default': dj_database_url.parse(environ["DATABASE_URL"])
 }
-assert 0, DATABASES
 
 
 # Password validation
