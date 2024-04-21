@@ -45,7 +45,7 @@ var ScreenResolutions = map[string]bool{
 
 var channel = make(chan Visit)
 
-var POST_URL = "http://example.com/"
+var POST_URL = "http://localhost:8000/save_count_batch"
 
 // func prep(tx *sql.DB) *sql.Stmt {
 //

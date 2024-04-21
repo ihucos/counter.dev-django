@@ -3,6 +3,9 @@ from django.db.models import F
 from django.db.models.functions import Concat, Cast
 from django.contrib.auth import get_user_model
 
+class UserData(models.Model):
+    user = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
+    uuid = models.UUIDField(unique=True)
 
 class Domain(models.Model):
     class Meta:
@@ -22,8 +25,8 @@ class Domain(models.Model):
 
 
 class DomainCount(models.Model):
-    class Meta:
-        unique_together = [["domain", "date", "dimension", "member"]]
+    # class Meta:
+    #     unique_together = [["domain", "date", "dimension", "member"]]
 
     domain = models.ForeignKey(Domain, on_delete=models.CASCADE)
     date = models.DateField()
