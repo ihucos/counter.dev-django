@@ -16,10 +16,10 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
-import analytics.views
+import counter.views
 
 urlpatterns = [
-    path('save_count_batch', analytics.views.save_count_batch),
+    path('save_count_batch', counter.views.save_count_batch),
     path('admin/', admin.site.urls),
     path('api-auth/', include('rest_framework.urls'))
 

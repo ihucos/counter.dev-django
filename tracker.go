@@ -131,16 +131,18 @@ func ParseUTCOffset(r *http.Request, key string) int {
 }
 
 type Visit struct {
-	user   string
+	userID   string
+	userUUID   string
 	domain string
 	date   string
 	data  map[string]string
 }
 
-type Batch map[[5]string]int
+type Batch map[[6]string]int
 
 type PostData struct {
-	User      []string `json:"user"`
+	UserId      []string `json:"user_id"`
+	UserUUID      []string `json:"user_uuid"`
 	Domain    []string `json:"domain"`
 	Date      []string `json:"date"`
 	Dimension []string `json:"dimension"`
@@ -159,7 +161,7 @@ func batcher() {
 		for dimension, member := range visit.data {
 
       // aggregate what we can aggregate 
-			key := [5]string{visit.user, visit.domain, visit.date, dimension, member}
+			key := [6]string{visit.userID, visit.userUUID, visit.domain, visit.date, dimension, member}
 			currentCount, ok := batch[key]
 			if !ok {
 				currentCount = 0
@@ -180,11 +182,12 @@ func batcher() {
 func saveBatch(batch Batch) {
 	postData := PostData{}
 	for key, count := range batch {
-		postData.User = append(postData.User, key[0])
-		postData.Domain = append(postData.Domain, key[1])
-		postData.Date = append(postData.Date, key[2])
-		postData.Dimension = append(postData.Dimension, key[4])
-		postData.Member = append(postData.Member, key[4])
+		postData.UserId = append(postData.UserId, key[0])
+		postData.UserUUID = append(postData.UserUUID, key[1])
+		postData.Domain = append(postData.Domain, key[2])
+		postData.Date = append(postData.Date, key[3])
+		postData.Dimension = append(postData.Dimension, key[5])
+		postData.Member = append(postData.Member, key[5])
 		postData.Count = append(postData.Count, count)
 	}
 	body, err := json.Marshal(postData)
@@ -213,23 +216,24 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
 	//
 	// Input validation
 	//
-	var user string
-	uuid := r.FormValue("id")
-	if uuid == "" {
-		userId := r.FormValue("user")
-		if userId == "" {
+	// var user string
+	userUUID := r.FormValue("id")
+  userID := ""
+	if userUUID == "" {
+		userID = r.FormValue("user")
+		if userID == "" {
 			// this has to be supported until the end of time, or
 			// alternatively all current users are not using that option.
-			userId = r.FormValue("site")
-			if userId == "" {
+			userID = r.FormValue("site")
+			if userID == "" {
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write([]byte("missing site param\n"))
 				return
 			}
 		}
-		user = userId
+		// user = userID
 	} else {
-		user = uuid
+		// user = userUUID
 	}
 
 	//
@@ -348,7 +352,7 @@ func handleTrack(w http.ResponseWriter, r *http.Request) {
   // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
   // domain := uuidX.New().String()
 
-	channel <- Visit{user, domain, now.Format("2006-01-02"), visitData}
+	channel <- Visit{userID, userUUID, domain, now.Format("2006-01-02"), visitData}
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Cache-Control", "public, immutable")
