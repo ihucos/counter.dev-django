@@ -36,10 +36,10 @@ def save_count_batch(request):
     # Resolve user names and uuids to an user id
     #
     user_by_username = {
-        uuid: user_id
-        for uuid, user_id in get_user_model()
+        username: user_id
+        for username, user_id in get_user_model()
         .objects.filter(username__in=used_usernames)
-        .values("username", "id")
+        .values_list("username", "id")
     }
     user_by_uuid = {
         uuid: user_id
@@ -52,16 +52,17 @@ def save_count_batch(request):
     #
     # Create domains
     #
-    domain_objs = []
+    domains = set()
     for (user_key, name) in set(zip(request.data["user"], request.data["domain"])):
 
         try:
             user_id = user_by_user_key[user_key]
         except KeyError:
             continue
-        domain_objs.append(models.Domain(user_id=user_id, name=name))
+        domains.add((user_id, name))
+    assert 0, domains
     indexed_domains = {
-        (d.user, d.name) for d in models.Domain.objects.bulk_create(domain_objs)
+        (d.user, d.name): d for d in models.Domain.objects.bulk_create(domain_objs)
     }
 
     #
@@ -70,8 +71,15 @@ def save_count_batch(request):
     domain_count_objs = []
     for item_values in zip(*(request.data[key] for key in ITEM_KEYS)):
         item = {key: item_values[ITEM_KEYS.index(key)] for key in ITEM_KEYS}
+
+        try:
+            domain_obj = indexed_domains[(item["user"], item["domain"])]
+        except KeyError:
+            # No such user
+            continue
+
         domain_count_objs.append(
-            domain=indexed_domains[(item["user"], item["domain"])],
+            domain=domain_obj,
             date=item["date"],
             dimension=item["dimension"],
             member=item["member"],
@@ -87,4 +95,4 @@ def save_count_batch(request):
     # Return nothing
     #
 
-    return Response(serializer.data, status=status.HTTP_204_NO_DATA)
+    return Response("", status=status.HTTP_204_NO_CONTENT)
