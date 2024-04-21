@@ -2,10 +2,17 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+import subprocess
 
 
 def main():
     """Run administrative tasks."""
+
+    if not os.environ.get("COUNTER_SKIP_POETRY", None):
+        os.environ["COUNTER_SKIP_POETRY"] = "yes"
+        subprocess.run(["poetry", "install", "--quiet"], check=True)
+        os.execlp(*(["poetry", "poetry", "run"] + sys.argv))
+
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'counterdev.settings')
     try:
         from django.core.management import execute_from_command_line
